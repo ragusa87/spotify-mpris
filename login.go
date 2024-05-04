@@ -6,9 +6,15 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/brianstrauch/spotify"
 )
+
+type LoginToken struct {
+	Token     *spotify.Token
+	CreatedAt int64
+}
 
 func ListenForCode(state string) (code string, err error) {
 	listeningAddress := getConfigValue("SERVER_ADDR", "localhost:10001", false)
@@ -36,11 +42,11 @@ func ListenForCode(state string) (code string, err error) {
 	if err := server.ListenAndServe(); err != http.ErrServerClosed {
 		return "", err
 	}
-	fmt.Println("Code received")
+	fmt.Printf("Code received: %s\n", code)
 	return code, nil
 }
 
-func login() (*spotify.Token, error) {
+func login() (*LoginToken, error) {
 
 	var clientId = getConfigValue("CLIENT_ID", "", true)
 	var redirectUrl = getConfigValue("REDIRECT_URL", "", true)
@@ -66,16 +72,67 @@ func login() (*spotify.Token, error) {
 	}
 
 	// Exchanges the code for an access token
+	log.Printf("Requesting PKCE token..")
 	token, err := spotify.RequestPKCEToken(clientId, code, redirectUrl, verifier)
-	if err != nil {
+	if err != nil || token == nil {
+		log.Printf("Error while requesting PKCE Token")
 		return nil, err
 	}
 	// Refresh the token directly
+	log.Printf("Refreshing PKCE token..")
 	token, err = spotify.RefreshPKCEToken(token.RefreshToken, clientId)
-	if err != nil {
+	if err != nil || token == nil {
+		log.Printf("Error while refreshing PKCE Token")
 		return nil, err
 	}
 
-	return token, nil
+	loginToken := new(LoginToken)
+	loginToken.Token = token
+	loginToken.CreatedAt = time.Now().Unix()
 
+	log.Printf("New token %s", loginToken.Token.AccessToken)
+
+	return loginToken, nil
+}
+
+func refreshToken(token *LoginToken) error {
+	// Refresh the token directly
+	if token == nil || token.Token == nil || token.Token.RefreshToken == "" {
+		log.Printf("Empty refresh token provided")
+		token = nil
+	}
+	var clientId = getConfigValue("CLIENT_ID", "", true)
+
+	log.Printf("Refreshing token")
+	spotifyToken, err := spotify.RefreshPKCEToken(token.Token.RefreshToken, clientId)
+	if err != nil {
+		return err
+	}
+
+	if spotifyToken == nil {
+		return errors.New("null refresh token received")
+	}
+
+	token.Token = spotifyToken
+	token.CreatedAt = time.Now().Unix()
+
+	return nil
+}
+
+func refreshIfNeeded(token *LoginToken, sleepTime int64) bool {
+	const marginSec = 5
+
+	remaining := token.CreatedAt + int64(token.Token.ExpiresIn) - time.Now().Unix() - marginSec
+	log.Printf("Token remaning time: %d sec, sleep for %d sec", remaining, sleepTime/1000)
+
+	if remaining-int64(sleepTime/1000) < 0 {
+		error := refreshToken(token)
+		if error != nil {
+			log.Printf("Error while refreshing token %s", error.Error())
+			token = nil
+		}
+		return true
+	}
+
+	return false
 }

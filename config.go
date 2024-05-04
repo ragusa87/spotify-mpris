@@ -15,7 +15,10 @@ import (
 )
 
 func getConfigFilename() string {
-	var runtime, _ = os.LookupEnv("XDG_CONFIG_HOME")
+	var runtime, exists = os.LookupEnv("XDG_CONFIG_HOME")
+	if !exists {
+		runtime = ".config"
+	}
 	return filepath.Join(runtime, "spotify-mpris", "config.conf")
 }
 
@@ -81,7 +84,7 @@ func saveConfigs(config Config) {
 
 }
 
-func saveToken(token *spotify.Token) {
+func saveToken(token *LoginToken) {
 
 	if token == nil {
 		saveConfig("TOKEN", "")
@@ -98,27 +101,25 @@ func saveToken(token *spotify.Token) {
 	saveConfig("TOKEN", string(jsonData))
 }
 
-func getToken() (*spotify.Token, error) {
-	token := spotify.Token{
-		AccessToken:  "",
-		TokenType:    "",
-		RefreshToken: "",
-		ExpiresIn:    0,
-	}
-	tokenPointer := &token
+func getToken() (*LoginToken, error) {
+
+	tokenScruct := new(LoginToken)
+	spotifyToken := new(spotify.Token)
+	tokenScruct.Token = spotifyToken
+	tokenScruct.CreatedAt = 0
 
 	tokenRaw := getConfigValue("TOKEN", "", false)
 	if tokenRaw == "" {
-		return nil, errors.New("empty token")
+		return nil, errors.New("no token was stored")
 	}
 
 	reader := strings.NewReader(tokenRaw)
-	err := json.NewDecoder(reader).Decode(tokenPointer)
+	err := json.NewDecoder(reader).Decode(&tokenScruct)
 	if err != nil {
 		return nil, errors.New("error decoding token")
 	}
 
-	return tokenPointer, nil
+	return tokenScruct, nil
 }
 
 func getConfigValue(name string, defaultValue string, mandatory bool) string {
